@@ -1,0 +1,240 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Creator {
+  id                  String               @id @default(cuid())
+  name                String
+  description         String?
+  layer               String               @default("unknown")
+  status              String               @default("candidate")
+  notes               String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  accounts            CreatorAccount[]
+  contentItems        ContentItem[]
+  discoveryCandidates DiscoveryCandidate[]
+
+  @@index([status])
+  @@index([layer])
+}
+
+model CreatorAccount {
+  id                String        @id @default(cuid())
+  creatorId         String
+  creator           Creator       @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  platform          String        @default("youtube")
+  channelId         String        @unique
+  handle            String?
+  channelUrl        String?
+  uploadsPlaylistId String?
+  title             String
+  description       String?
+  customUrl         String?
+  country           String?
+  publishedAt       DateTime?
+  subscriberCount   BigInt?
+  viewCount         BigInt?
+  videoCount        Int?
+  sourceEtag        String?
+  rawResponse       String?
+  fetchedAt         DateTime?
+  dataExpiresAt     DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  contentItems      ContentItem[]
+
+  @@index([platform])
+  @@index([dataExpiresAt])
+}
+
+model DiscoveryQuery {
+  id                 String               @id @default(cuid())
+  query              String
+  layer              String               @default("unknown")
+  maxResults         Int                  @default(10)
+  maxPages           Int                  @default(1)
+  includeVideoSearch Boolean              @default(false)
+  estimatedQuotaCost Int                  @default(100)
+  status             String               @default("pending")
+  errorMessage       String?
+  createdAt          DateTime             @default(now())
+  completedAt        DateTime?
+  candidates         DiscoveryCandidate[]
+  apiRunLogs         ApiRunLog[]
+
+  @@index([createdAt])
+  @@index([status])
+}
+
+model DiscoveryCandidate {
+  id             String          @id @default(cuid())
+  queryId        String
+  query          DiscoveryQuery  @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  creatorId      String?
+  creator        Creator?        @relation(fields: [creatorId], references: [id])
+  channelId      String
+  title          String
+  description    String?
+  thumbnailUrl   String?
+  sourceVideoId  String?
+  evidenceTitle  String?
+  status         String          @default("pending")
+  confidenceScore Float?
+  rawResponse    String?
+  discoveredAt   DateTime        @default(now())
+  approvedAt     DateTime?
+
+  @@unique([queryId, channelId])
+  @@index([channelId])
+  @@index([status])
+}
+
+model ContentItem {
+  id              String             @id @default(cuid())
+  creatorId       String
+  creator         Creator            @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         CreatorAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  youtubeVideoId  String             @unique
+  title           String
+  description     String?
+  publishedAt     DateTime?
+  durationIso     String?
+  durationSeconds Int?
+  formatType      String             @default("unknown")
+  url             String?
+  thumbnailUrl    String?
+  sourceEtag      String?
+  rawResponse     String?
+  fetchedAt       DateTime?
+  dataExpiresAt   DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  snapshots       ContentSnapshot[]
+  scores          PerformanceScore[]
+  audits          ContentAudit[]
+
+  @@index([creatorId])
+  @@index([formatType])
+  @@index([publishedAt])
+  @@index([dataExpiresAt])
+}
+
+model ContentSnapshot {
+  id            String       @id @default(cuid())
+  contentItemId String
+  contentItem   ContentItem  @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  capturedAt    DateTime     @default(now())
+  viewCount     BigInt?
+  likeCount     BigInt?
+  commentCount  BigInt?
+  favoriteCount BigInt?
+  sourceEtag    String?
+  rawResponse   String?
+  dataExpiresAt DateTime?
+
+  @@index([contentItemId])
+  @@index([capturedAt])
+  @@index([dataExpiresAt])
+}
+
+model PerformanceScore {
+  id                          String      @id @default(cuid())
+  contentItemId               String
+  contentItem                 ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  scoredAt                    DateTime    @default(now())
+  ageDays                     Float?
+  viewsPerDay                 Float?
+  likesPer1000Views           Float?
+  commentsPer1000Views        Float?
+  creatorMedianViewsPerDay    Float?
+  overperformanceScore        Float?
+  percentileWithinCreator     Float?
+  percentileWithinLayer       Float?
+  formatType                  String      @default("unknown")
+  flags                       String      @default("[]")
+
+  @@unique([contentItemId])
+  @@index([formatType])
+  @@index([overperformanceScore])
+}
+
+model ContentAudit {
+  id                           String      @id @default(cuid())
+  contentItemId                String
+  contentItem                  ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  model                        String
+  evidenceSnapshotIds          String      @default("[]")
+  evidenceContentItemIds       String      @default("[]")
+  topic                        String
+  sportLayer                   String
+  contentArchetype             String
+  formatType                   String
+  hookType                     String
+  audienceProblem              String
+  coachingQualityScore         Int?
+  scientificQualityScore       Int?
+  businessRelevanceScore       Int?
+  repeatabilityScore           Int?
+  observableEvidence           String
+  interpretation               String
+  whyItLikelyPerformed         String
+  whyItMightUnderperform       String
+  risksOrCaveats               String
+  suggestedAdaptationForUser   String
+  confidenceScore              Float
+  rawResponse                  String?
+  createdAt                    DateTime    @default(now())
+
+  @@index([contentItemId])
+  @@index([confidenceScore])
+}
+
+model WeeklyReport {
+  id                     String   @id @default(cuid())
+  weekStart              DateTime
+  weekEnd                DateTime
+  title                  String
+  summary                String
+  evidenceContentItemIds String   @default("[]")
+  evidenceAuditIds       String   @default("[]")
+  confidenceScore        Float
+  rawInput               String?
+  createdAt              DateTime @default(now())
+
+  @@index([weekStart, weekEnd])
+}
+
+model ApiRunLog {
+  id               String          @id @default(cuid())
+  service          String
+  method           String
+  endpoint         String?
+  query            String?
+  quotaCost        Int             @default(0)
+  status           String
+  requestMetadata  String?
+  responseMetadata String?
+  errorMessage     String?
+  startedAt        DateTime        @default(now())
+  completedAt      DateTime?
+  discoveryQueryId String?
+  discoveryQuery   DiscoveryQuery? @relation(fields: [discoveryQueryId], references: [id], onDelete: SetNull)
+
+  @@index([service])
+  @@index([startedAt])
+  @@index([status])
+}
+
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
