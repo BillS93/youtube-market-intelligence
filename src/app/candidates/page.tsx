@@ -1,9 +1,15 @@
 import { approveCandidate, rejectCandidate } from "@/app/actions";
-import { Badge, Button, EmptyState, PageHeader, Panel } from "@/components/ui";
-import { getPrisma } from "@/lib/prisma";
+import { Badge, Button, EmptyState, Notice, PageHeader, Panel } from "@/components/ui";
+import { readFeedback } from "@/lib/feedback";
 import { formatDate } from "@/lib/format";
+import { getPrisma } from "@/lib/prisma";
 
-export default async function CandidatesPage() {
+export default async function CandidatesPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const feedback = readFeedback(await searchParams);
   const candidates = await getPrisma().discoveryCandidate.findMany({
     orderBy: { discoveredAt: "desc" },
     include: { query: true, creator: true },
@@ -14,12 +20,15 @@ export default async function CandidatesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Candidates approval"
-        description="Review discovered YouTube channels before they enter the watchlist."
+        description="Approve one relevant YouTube channel into the watchlist before refreshing videos."
       />
+      <Notice feedback={feedback} />
 
       <Panel>
         {candidates.length === 0 ? (
-          <EmptyState>No candidates yet. Run discovery first.</EmptyState>
+          <EmptyState>
+            No candidates yet. Go to Discovery, run one tiny query, then return here to approve a channel into the watchlist.
+          </EmptyState>
         ) : (
           <div className="grid gap-3">
             {candidates.map((candidate) => (
@@ -32,10 +41,10 @@ export default async function CandidatesPage() {
                       <Badge>{candidate.query.layer}</Badge>
                     </div>
                     <p className="mt-2 line-clamp-3 text-sm text-muted">
-                      {candidate.description || "No channel description returned."}
+                      {candidate.description || "No channel description returned by YouTube."}
                     </p>
                     <div className="mt-3 text-xs text-muted">
-                      Query: {candidate.query.query} · Channel ID: {candidate.channelId} ·{" "}
+                      Query: {candidate.query.query} - Channel ID: {candidate.channelId} -{" "}
                       {formatDate(candidate.discoveredAt)}
                     </div>
                     {candidate.evidenceTitle ? (
@@ -44,19 +53,25 @@ export default async function CandidatesPage() {
                       </div>
                     ) : null}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex min-w-48 flex-col gap-2">
                     {candidate.status === "pending" ? (
                       <>
                         <form action={approveCandidate}>
                           <input name="candidateId" type="hidden" value={candidate.id} />
-                          <Button>Approve</Button>
+                          <Button>Approve to watchlist</Button>
                         </form>
                         <form action={rejectCandidate}>
                           <input name="candidateId" type="hidden" value={candidate.id} />
                           <Button tone="danger">Reject</Button>
                         </form>
                       </>
-                    ) : null}
+                    ) : (
+                      <div className="text-sm text-muted">
+                        {candidate.status === "approved"
+                          ? "Already approved. Next step: refresh this creator from the watchlist."
+                          : "Rejected."}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

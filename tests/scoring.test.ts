@@ -82,5 +82,8 @@ describe("calculatePerformanceScores", () => {
     expect(missing?.likesPer1000Views).toBeNull();
     expect(missing?.flags).toContain("missing_stats");
     expect(tooNew?.flags).toContain("too_new");
+    expect(tooNew?.overperformanceScore).toBeNull();
+    expect(tooNew?.percentileWithinCreator).toBeNull();
+    expect(tooNew?.percentileWithinLayer).toBeNull();
   });
 });

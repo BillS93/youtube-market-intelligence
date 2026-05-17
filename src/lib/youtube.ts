@@ -98,7 +98,21 @@ export type YoutubeCommentThread = {
   kind: string;
   etag?: string;
   id: string;
-  snippet?: Record<string, unknown>;
+  snippet?: {
+    topLevelComment?: {
+      id?: string;
+      snippet?: {
+        authorDisplayName?: string;
+        textDisplay?: string;
+        textOriginal?: string;
+        likeCount?: number;
+        publishedAt?: string;
+      };
+    };
+    totalReplyCount?: number;
+    canReply?: boolean;
+    isPublic?: boolean;
+  };
 };
 
 type YoutubeSnippet = {
@@ -349,13 +363,14 @@ export function createYoutubeClient(options: YoutubeClientOptions = {}) {
       };
     },
 
-    async getCommentThreads(videoId: string, maxResults = 20) {
+    async getCommentThreads(videoId: string, maxResults = 20, order: "relevance" | "time" = "relevance") {
       return request<YoutubeCommentThread>(
         "commentThreads",
         {
           part: "snippet",
           videoId,
           maxResults: clampMaxResults(maxResults),
+          order,
           textFormat: "plainText"
         },
         1
@@ -415,8 +430,12 @@ export async function getVideos(videoIds: string[]) {
   return getYoutubeClient().getVideos(videoIds);
 }
 
-export async function getCommentThreads(videoId: string, maxResults = 20) {
-  return getYoutubeClient().getCommentThreads(videoId, maxResults);
+export async function getCommentThreads(
+  videoId: string,
+  maxResults = 20,
+  order: "relevance" | "time" = "relevance"
+) {
+  return getYoutubeClient().getCommentThreads(videoId, maxResults, order);
 }
 
 export function bestThumbnail(

@@ -1,6 +1,11 @@
 import { getPrisma } from "@/lib/prisma";
 import { toJson, parseJsonArray } from "@/lib/json";
-import { assertYoutubeQuotaAvailable, estimateDiscoveryQuotaCost, estimateRefreshQuotaCost } from "@/lib/quota";
+import {
+  assertYoutubeQuotaAvailable,
+  estimateCommentQuotaCost,
+  estimateDiscoveryQuotaCost,
+  estimateRefreshQuotaCost
+} from "@/lib/quota";
 import { getDataExpiryDate, getNumberSetting } from "@/lib/settings";
 import {
   bestThumbnail,
@@ -9,11 +14,18 @@ import {
   parseOptionalBigInt,
   parseYoutubeDurationSeconds,
   type YoutubeChannel,
+  type YoutubeCommentThread,
   type YoutubeSearchItem,
   type YoutubeVideo
 } from "@/lib/youtube";
 import { calculateAndStoreScores } from "@/lib/scoring";
 import { auditSelectedContentItems } from "@/lib/audit";
+import type { AnalysisDepth } from "@/lib/evidence";
+import {
+  generateContentBriefsFromLatestTrendReport,
+  generateCreatorPatternReports,
+  generateCrossCreatorTrendReport
+} from "@/lib/trends";
 
 export type DiscoveryInput = {
   query: string;
@@ -47,11 +59,12 @@ export async function runDiscoveryJob(input: DiscoveryInput) {
 
   try {
     const channelResults = await client.searchChannels(input.query, maxResults);
-    await storeChannelCandidates(discoveryQuery.id, channelResults.items, input.layer);
+    const expiryDate = await getDataExpiryDate();
+    await storeChannelCandidates(discoveryQuery.id, channelResults.items, expiryDate);
 
     if (input.includeVideoSearch) {
       const videoResults = await client.searchVideos(input.query, maxResults);
-      await storeVideoCandidates(discoveryQuery.id, videoResults.items, input.layer);
+      await storeVideoCandidates(discoveryQuery.id, videoResults.items, expiryDate);
     }
 
     return prisma.discoveryQuery.update({
@@ -59,7 +72,8 @@ export async function runDiscoveryJob(input: DiscoveryInput) {
       data: {
         status: "completed",
         completedAt: new Date()
-      }
+      },
+      include: { candidates: true }
     });
   } catch (error) {
     await prisma.discoveryQuery.update({
@@ -159,7 +173,7 @@ export async function refreshCreatorJob(creatorId: string) {
   }
 
   const maxPages = await getNumberSetting("YOUTUBE_MAX_DISCOVERY_PAGES");
-  await assertYoutubeQuotaAvailable(estimateRefreshQuotaCost(maxPages));
+  await assertYoutubeQuotaAvailable(estimateRefreshQuotaCost(maxPages, maxPages * 50));
   const client = getYoutubeClient();
 
   for (const account of creator.accounts.filter((item) => item.platform === "youtube")) {
@@ -223,17 +237,143 @@ export async function auditSelectedVideosJob(contentItemIds: string[]) {
   return auditSelectedContentItems(contentItemIds);
 }
 
+export async function auditSelectedVideosWithDepthJob(
+  contentItemIds: string[],
+  analysisDepth: AnalysisDepth
+) {
+  return auditSelectedContentItems(contentItemIds, analysisDepth);
+}
+
+export async function saveManualEvidenceNotesJob(input: {
+  contentItemId: string;
+  watchedByUser: boolean;
+  openingHookNotes?: string;
+  videoStructureNotes?: string;
+  coachingDeliveryNotes?: string;
+  exerciseOrTrainingContentNotes?: string;
+  scienceOrClaimsNotes?: string;
+  ctaOrOfferNotes?: string;
+  transcriptOrExcerpt?: string;
+  userNotes?: string;
+}) {
+  return getPrisma().manualEvidenceNote.create({
+    data: {
+      contentItemId: input.contentItemId,
+      watchedByUser: input.watchedByUser,
+      openingHookNotes: nullableText(input.openingHookNotes),
+      videoStructureNotes: nullableText(input.videoStructureNotes),
+      coachingDeliveryNotes: nullableText(input.coachingDeliveryNotes),
+      exerciseOrTrainingContentNotes: nullableText(input.exerciseOrTrainingContentNotes),
+      scienceOrClaimsNotes: nullableText(input.scienceOrClaimsNotes),
+      ctaOrOfferNotes: nullableText(input.ctaOrOfferNotes),
+      transcriptOrExcerpt: nullableText(input.transcriptOrExcerpt),
+      userNotes: nullableText(input.userNotes)
+    }
+  });
+}
+
+export async function fetchCommentsForVideosJob(
+  contentItemIds: string[],
+  maxResults?: number
+) {
+  const prisma = getPrisma();
+  const configuredMax = await getNumberSetting("YOUTUBE_COMMENT_MAX_RESULTS");
+  const boundedMaxResults = clamp(maxResults ?? configuredMax, 1, 100);
+  const videos = await prisma.contentItem.findMany({
+    where: { id: { in: [...new Set(contentItemIds)].filter(Boolean) } },
+    select: { id: true, youtubeVideoId: true, title: true }
+  });
+
+  if (videos.length === 0) {
+    throw new Error("No matching stored videos were found for comment collection.");
+  }
+
+  await assertYoutubeQuotaAvailable(estimateCommentQuotaCost(videos.length));
+
+  const client = getYoutubeClient();
+  const results: {
+    contentItemId: string;
+    title: string;
+    status: "success" | "error";
+    storedComments: number;
+    message?: string;
+  }[] = [];
+
+  for (const video of videos) {
+    try {
+      const response = await client.getCommentThreads(video.youtubeVideoId, boundedMaxResults, "relevance");
+      let storedComments = 0;
+
+      for (const item of response.items) {
+        const stored = await storeComment(video.id, item);
+        if (stored) {
+          storedComments += 1;
+        }
+      }
+
+      results.push({
+        contentItemId: video.id,
+        title: video.title,
+        status: "success",
+        storedComments
+      });
+    } catch (error) {
+      results.push({
+        contentItemId: video.id,
+        title: video.title,
+        status: "error",
+        storedComments: 0,
+        message: classifyCommentError(error)
+      });
+    }
+  }
+
+  return results;
+}
+
+export async function fetchCommentsForTopBottomVideosJob(maxResults?: number) {
+  const top = await getPrisma().performanceScore.findMany({
+    where: { overperformanceScore: { not: null } },
+    orderBy: { overperformanceScore: "desc" },
+    take: 10,
+    select: { contentItemId: true }
+  });
+  const bottom = await getPrisma().performanceScore.findMany({
+    where: { overperformanceScore: { not: null } },
+    orderBy: { overperformanceScore: "asc" },
+    take: 10,
+    select: { contentItemId: true }
+  });
+
+  return fetchCommentsForVideosJob(
+    [...new Set([...top, ...bottom].map((score) => score.contentItemId))],
+    maxResults
+  );
+}
+
+export async function fetchCommentsForOverperformingVideosJob(maxResults?: number) {
+  const videos = await getPrisma().performanceScore.findMany({
+    where: { overperformanceScore: { gte: 1.5 } },
+    orderBy: { overperformanceScore: "desc" },
+    take: 25,
+    select: { contentItemId: true }
+  });
+
+  return fetchCommentsForVideosJob(videos.map((score) => score.contentItemId), maxResults);
+}
+
 export async function generateWeeklyReportJob() {
   const prisma = getPrisma();
   const weekEnd = new Date();
   const weekStart = new Date(weekEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const topScores = await prisma.performanceScore.findMany({
+  const candidateScores = await prisma.performanceScore.findMany({
     where: {
       formatType: "long_form",
-      overperformanceScore: { not: null }
+      overperformanceScore: { not: null },
+      contentItem: { audits: { some: {} } }
     },
     orderBy: { overperformanceScore: "desc" },
-    take: 5,
+    take: 50,
     include: {
       contentItem: {
         include: {
@@ -243,22 +383,23 @@ export async function generateWeeklyReportJob() {
       }
     }
   });
-  const bottomScores = await prisma.performanceScore.findMany({
-    where: {
-      formatType: "long_form",
-      overperformanceScore: { not: null }
-    },
-    orderBy: { overperformanceScore: "asc" },
-    take: 5,
-    include: {
-      contentItem: {
-        include: {
-          creator: true,
-          audits: { orderBy: { createdAt: "desc" }, take: 1 }
-        }
-      }
-    }
-  });
+  const eligibleScores = candidateScores.filter((score) =>
+    isReportScoreEligible(parseJsonArray(score.flags))
+  );
+
+  if (eligibleScores.length < 2) {
+    throw new Error(
+      "Generate at least two distinct scored, audited, eligible long-form videos before creating a weekly report."
+    );
+  }
+
+  const bucketSize = Math.min(5, Math.floor(eligibleScores.length / 2));
+  const topScores = eligibleScores.slice(0, bucketSize);
+  const topIds = new Set(topScores.map((score) => score.contentItemId));
+  const bottomScores = [...eligibleScores]
+    .reverse()
+    .filter((score) => !topIds.has(score.contentItemId))
+    .slice(0, bucketSize);
 
   const evidenceContentItemIds = [
     ...new Set([...topScores, ...bottomScores].map((score) => score.contentItemId))
@@ -278,7 +419,16 @@ export async function generateWeeklyReportJob() {
       ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
       : 0.5;
 
+  if (evidenceContentItemIds.length === 0 || evidenceAuditIds.length === 0) {
+    throw new Error(
+      "Generate at least one scored and audited long-form video before creating a weekly report."
+    );
+  }
+
   const summary = buildWeeklySummary(topScores, bottomScores);
+  const evidenceQuality = weakestEvidenceQuality(
+    [...topScores, ...bottomScores].map((score) => score.contentItem.audits[0]?.evidenceQuality)
+  );
 
   return prisma.weeklyReport.create({
     data: {
@@ -286,15 +436,42 @@ export async function generateWeeklyReportJob() {
       weekEnd,
       title: `Weekly YouTube market report: ${weekStart.toLocaleDateString()} - ${weekEnd.toLocaleDateString()}`,
       summary,
+      reportVersion: "weekly_evidence_summary_v2",
+      analysisDepth: "standard",
+      evidenceQuality,
+      evidenceLimitations: toJson([
+        "Weekly report uses saved scores and audits only.",
+        `Aggregate evidence quality is conservatively labelled ${evidenceQuality}.`,
+        "Report cannot claim causation or platform-wide trends.",
+        "Videos without saved audits or with serious score flags are excluded."
+      ]),
       evidenceContentItemIds: toJson(evidenceContentItemIds),
       evidenceAuditIds: toJson(evidenceAuditIds),
       confidenceScore,
+      structuredJson: toJson({
+        evidence_content_item_ids: evidenceContentItemIds,
+        evidence_audit_ids: evidenceAuditIds,
+        top_score_ids: topScores.map((score) => score.id),
+        bottom_score_ids: bottomScores.map((score) => score.id)
+      }),
       rawInput: toJson({
         top_score_ids: topScores.map((score) => score.id),
         bottom_score_ids: bottomScores.map((score) => score.id)
       })
     }
   });
+}
+
+export async function generateCreatorPatternReportsJob() {
+  return generateCreatorPatternReports();
+}
+
+export async function generateTrendReportJob() {
+  return generateCrossCreatorTrendReport();
+}
+
+export async function generateContentBriefsJob() {
+  return generateContentBriefsFromLatestTrendReport();
 }
 
 export async function purgeOrRefreshExpiredYoutubeDataJob() {
@@ -314,10 +491,13 @@ export async function purgeOrRefreshExpiredYoutubeDataJob() {
   }
 
   const audits = await prisma.contentAudit.findMany({
-    select: { evidenceSnapshotIds: true }
+    select: { evidenceSnapshotIds: true, evidenceCommentIds: true }
   });
   const referencedSnapshotIds = new Set(
     audits.flatMap((audit) => parseJsonArray(audit.evidenceSnapshotIds))
+  );
+  const referencedCommentIds = new Set(
+    audits.flatMap((audit) => parseJsonArray(audit.evidenceCommentIds))
   );
   const expiredSnapshots = await prisma.contentSnapshot.findMany({
     where: { dataExpiresAt: { lt: now } },
@@ -345,6 +525,29 @@ export async function purgeOrRefreshExpiredYoutubeDataJob() {
     where: { dataExpiresAt: { lt: now } },
     data: { rawResponse: null }
   });
+  await prisma.discoveryCandidate.updateMany({
+    where: { dataExpiresAt: { lt: now } },
+    data: { rawResponse: null }
+  });
+
+  const expiredComments = await prisma.videoComment.findMany({
+    where: { dataExpiresAt: { lt: now } },
+    select: { id: true }
+  });
+  const unreferencedExpiredCommentIds = expiredComments
+    .map((comment) => comment.id)
+    .filter((id) => !referencedCommentIds.has(id));
+
+  if (unreferencedExpiredCommentIds.length > 0) {
+    await prisma.videoComment.deleteMany({
+      where: { id: { in: unreferencedExpiredCommentIds } }
+    });
+  }
+
+  await prisma.videoComment.updateMany({
+    where: { id: { in: [...referencedCommentIds] }, dataExpiresAt: { lt: now } },
+    data: { rawResponse: null }
+  });
 
   return {
     refreshedCreators: creatorIds.length,
@@ -352,11 +555,7 @@ export async function purgeOrRefreshExpiredYoutubeDataJob() {
   };
 }
 
-async function storeChannelCandidates(
-  queryId: string,
-  items: YoutubeSearchItem[],
-  _layer: string
-) {
+async function storeChannelCandidates(queryId: string, items: YoutubeSearchItem[], expiryDate: Date) {
   const prisma = getPrisma();
 
   for (const item of items) {
@@ -371,7 +570,8 @@ async function storeChannelCandidates(
         title: item.snippet.title ?? "Unknown channel",
         description: item.snippet.description ?? null,
         thumbnailUrl: bestThumbnail(item.snippet.thumbnails),
-        rawResponse: toJson(item)
+        rawResponse: toJson(item),
+        dataExpiresAt: expiryDate
       },
       create: {
         queryId,
@@ -379,13 +579,14 @@ async function storeChannelCandidates(
         title: item.snippet.title ?? "Unknown channel",
         description: item.snippet.description ?? null,
         thumbnailUrl: bestThumbnail(item.snippet.thumbnails),
-        rawResponse: toJson(item)
+        rawResponse: toJson(item),
+        dataExpiresAt: expiryDate
       }
     });
   }
 }
 
-async function storeVideoCandidates(queryId: string, items: YoutubeSearchItem[], _layer: string) {
+async function storeVideoCandidates(queryId: string, items: YoutubeSearchItem[], expiryDate: Date) {
   const prisma = getPrisma();
 
   for (const item of items) {
@@ -402,7 +603,8 @@ async function storeVideoCandidates(queryId: string, items: YoutubeSearchItem[],
         thumbnailUrl: bestThumbnail(item.snippet.thumbnails),
         sourceVideoId: item.id.videoId,
         evidenceTitle: item.snippet.title ?? null,
-        rawResponse: toJson(item)
+        rawResponse: toJson(item),
+        dataExpiresAt: expiryDate
       },
       create: {
         queryId,
@@ -412,7 +614,8 @@ async function storeVideoCandidates(queryId: string, items: YoutubeSearchItem[],
         thumbnailUrl: bestThumbnail(item.snippet.thumbnails),
         sourceVideoId: item.id.videoId,
         evidenceTitle: item.snippet.title ?? null,
-        rawResponse: toJson(item)
+        rawResponse: toJson(item),
+        dataExpiresAt: expiryDate
       }
     });
   }
@@ -499,6 +702,61 @@ async function storeVideo(
   });
 }
 
+async function storeComment(contentItemId: string, item: YoutubeCommentThread) {
+  const snippet = item.snippet?.topLevelComment?.snippet;
+  const youtubeCommentId = item.snippet?.topLevelComment?.id ?? item.id;
+  const text = snippet?.textOriginal ?? snippet?.textDisplay;
+
+  if (!youtubeCommentId || !text || !snippet) {
+    return false;
+  }
+
+  const dataExpiresAt = await getDataExpiryDate();
+
+  await getPrisma().videoComment.upsert({
+    where: { youtubeCommentId },
+    update: {
+      authorDisplayName: snippet.authorDisplayName ?? null,
+      text,
+      likeCount: snippet.likeCount ?? null,
+      publishedAt: snippet.publishedAt ? new Date(snippet.publishedAt) : null,
+      capturedAt: new Date(),
+      rawResponse: toJson(item),
+      dataExpiresAt
+    },
+    create: {
+      contentItemId,
+      youtubeCommentId,
+      authorDisplayName: snippet.authorDisplayName ?? null,
+      text,
+      likeCount: snippet.likeCount ?? null,
+      publishedAt: snippet.publishedAt ? new Date(snippet.publishedAt) : null,
+      rawResponse: toJson(item),
+      dataExpiresAt
+    }
+  });
+
+  return true;
+}
+
+export function classifyCommentError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Unknown comment fetch error";
+
+  if (/commentsDisabled/i.test(message)) {
+    return "commentsDisabled";
+  }
+
+  if (/videoNotFound/i.test(message)) {
+    return "videoNotFound";
+  }
+
+  if (/forbidden|403/i.test(message)) {
+    return "forbidden";
+  }
+
+  return message;
+}
+
 function buildWeeklySummary(topScores: ReportScore[], bottomScores: ReportScore[]) {
   const lines = [
     "Evidence-backed weekly summary.",
@@ -506,13 +764,19 @@ function buildWeeklySummary(topScores: ReportScore[], bottomScores: ReportScore[
     "Top long-form patterns:",
     ...topScores.map((score, index) => {
       const audit = score.contentItem.audits[0];
-      return `${index + 1}. ${score.contentItem.title} by ${score.contentItem.creator.name}: ${score.overperformanceScore?.toFixed(2) ?? "unknown"}x creator baseline. Evidence content item ${score.contentItemId}${audit ? `, audit ${audit.id}` : ""}. ${audit?.suggestedAdaptationForUser ?? "No audit yet, so no adaptation claim is made."}`;
+      if (!audit) {
+        throw new Error("Weekly reports require saved audits for every evidence video.");
+      }
+      return `${index + 1}. ${score.contentItem.title} by ${score.contentItem.creator.name}: ${score.overperformanceScore?.toFixed(2) ?? "unknown"}x creator baseline. Evidence content item ${score.contentItemId}, audit ${audit.id}. ${audit.suggestedAdaptationForUser}`;
     }),
     "",
     "Bottom long-form patterns:",
     ...bottomScores.map((score, index) => {
       const audit = score.contentItem.audits[0];
-      return `${index + 1}. ${score.contentItem.title} by ${score.contentItem.creator.name}: ${score.overperformanceScore?.toFixed(2) ?? "unknown"}x creator baseline. Evidence content item ${score.contentItemId}${audit ? `, audit ${audit.id}` : ""}. ${audit?.risksOrCaveats ?? "No audit yet, so no caveat claim is made."}`;
+      if (!audit) {
+        throw new Error("Weekly reports require saved audits for every evidence video.");
+      }
+      return `${index + 1}. ${score.contentItem.title} by ${score.contentItem.creator.name}: ${score.overperformanceScore?.toFixed(2) ?? "unknown"}x creator baseline. Evidence content item ${score.contentItemId}, audit ${audit.id}. ${audit.risksOrCaveats}`;
     }),
     "",
     "Caveat: this report uses stored YouTube API metadata and saved audits only. It does not claim algorithmic causation."
@@ -521,20 +785,57 @@ function buildWeeklySummary(topScores: ReportScore[], bottomScores: ReportScore[
   return lines.join("\n");
 }
 
+function isReportScoreEligible(flags: string[]) {
+  return !flags.some((flag) =>
+    [
+      "too_new",
+      "missing_stats",
+      "insufficient_baseline",
+      "outlier",
+      "celebrity_or_event_driven_possible"
+    ].includes(flag)
+  );
+}
+
+function weakestEvidenceQuality(values: Array<string | null | undefined>) {
+  const order = [
+    "metadata_only",
+    "metadata_plus_thumbnail",
+    "metadata_plus_comments",
+    "metadata_plus_comments_thumbnail",
+    "transcript_or_manual_notes",
+    "mixed"
+  ];
+  const normalized = values.filter((value): value is string => Boolean(value));
+
+  return normalized.sort((left, right) => order.indexOf(left) - order.indexOf(right))[0] ?? "metadata_only";
+}
+
 type ReportScore = Awaited<ReturnType<typeof getPrisma>>["performanceScore"] extends never
   ? never
   : {
       id: string;
       contentItemId: string;
       overperformanceScore: number | null;
+      flags: string;
       contentItem: {
         id: string;
         title: string;
         creator: { name: string };
-        audits: { id: string; suggestedAdaptationForUser: string; risksOrCaveats: string }[];
+        audits: {
+          id: string;
+          evidenceQuality: string;
+          suggestedAdaptationForUser: string;
+          risksOrCaveats: string;
+        }[];
       };
     };
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? Math.floor(value) : min));
+}
+
+function nullableText(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }

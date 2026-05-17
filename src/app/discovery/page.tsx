@@ -1,14 +1,19 @@
 import { runDiscovery } from "@/app/actions";
-import { Button, Field, PageHeader, Panel, inputClass } from "@/components/ui";
+import { Button, Field, InlineNotice, Notice, PageHeader, Panel, inputClass } from "@/components/ui";
+import { readFeedback } from "@/lib/feedback";
 import { getPrisma } from "@/lib/prisma";
-import { getYoutubeQuotaStatus } from "@/lib/quota";
+import { estimateDiscoveryQuotaCost, getYoutubeQuotaStatus } from "@/lib/quota";
 import { getNumberSetting } from "@/lib/settings";
 import { formatDate } from "@/lib/format";
 
-export default async function DiscoveryPage() {
+export default async function DiscoveryPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const feedback = readFeedback(await searchParams);
   const prisma = getPrisma();
-  const [defaultMaxResults, maxPages, quota, runs] = await Promise.all([
-    getNumberSetting("YOUTUBE_DEFAULT_MAX_RESULTS"),
+  const [maxPages, quota, runs] = await Promise.all([
     getNumberSetting("YOUTUBE_MAX_DISCOVERY_PAGES"),
     getYoutubeQuotaStatus(100),
     prisma.discoveryQuery.findMany({
@@ -24,8 +29,23 @@ export default async function DiscoveryPage() {
         title="Discovery"
         description="Run small YouTube API discovery jobs from seed queries. Channel search costs 100 quota units; optional video search adds another 100."
       />
+      <Notice feedback={feedback} />
+
+      {!process.env.YOUTUBE_API_KEY ? (
+        <InlineNotice title="YouTube API key missing" tone="error">
+          Add YOUTUBE_API_KEY to .env.local and restart the dev server before running discovery.
+        </InlineNotice>
+      ) : null}
 
       <Panel>
+        <div className="mb-4 rounded-md border border-border bg-panel-muted p-3 text-sm">
+          <div className="font-medium">Tiny first test run</div>
+          <p className="mt-1 text-muted">
+            Use one query, max results 1, max pages 1, and leave video search off. Estimated quota cost:{" "}
+            {estimateDiscoveryQuotaCost(false)} units. If you also search videos, estimated cost is{" "}
+            {estimateDiscoveryQuotaCost(true)} units.
+          </p>
+        </div>
         <form action={runDiscovery} className="grid gap-4 md:grid-cols-2">
           <Field label="Seed query">
             <input
@@ -50,7 +70,7 @@ export default async function DiscoveryPage() {
               type="number"
               min="1"
               max="50"
-              defaultValue={defaultMaxResults}
+              defaultValue="1"
             />
           </Field>
           <Field label="Max pages">
@@ -70,7 +90,8 @@ export default async function DiscoveryPage() {
           <div className="flex items-center gap-3 md:col-span-2">
             <Button>Run discovery</Button>
             <span className="text-sm text-muted">
-              Quota used today: {quota.usedToday} / {quota.limit}
+              Quota used today: {quota.usedToday} / {quota.limit}. This run is estimated at{" "}
+              {estimateDiscoveryQuotaCost(false)} or {estimateDiscoveryQuotaCost(true)} units depending on video search.
             </span>
           </div>
         </form>
@@ -86,10 +107,11 @@ export default async function DiscoveryPage() {
                 <th className="py-2 pr-3">Layer</th>
                 <th className="py-2 pr-3">Status</th>
                 <th className="py-2 pr-3">Candidates</th>
-                <th className="py-2 pr-3">Cost</th>
-                <th className="py-2 pr-3">Created</th>
-              </tr>
-            </thead>
+                  <th className="py-2 pr-3">Cost</th>
+                  <th className="py-2 pr-3">Created</th>
+                  <th className="py-2 pr-3">Error</th>
+                </tr>
+              </thead>
             <tbody>
               {runs.map((run) => (
                 <tr className="border-t border-border" key={run.id}>
@@ -99,12 +121,13 @@ export default async function DiscoveryPage() {
                   <td className="py-3 pr-3">{run.candidates.length}</td>
                   <td className="py-3 pr-3">{run.estimatedQuotaCost}</td>
                   <td className="py-3 pr-3">{formatDate(run.createdAt)}</td>
+                  <td className="py-3 pr-3 text-danger">{run.errorMessage ?? ""}</td>
                 </tr>
               ))}
               {runs.length === 0 ? (
                 <tr>
-                  <td className="py-4 text-muted" colSpan={6}>
-                    No discovery runs yet.
+                  <td className="py-4 text-muted" colSpan={7}>
+                    No discovery runs yet. Start with the tiny test run above to verify the YouTube key and quota logging.
                   </td>
                 </tr>
               ) : null}

@@ -19,9 +19,13 @@ export default async function DashboardPage() {
 
       <section className="grid gap-4 md:grid-cols-4">
         <Metric label="Approved creators" value={stats.approvedCreators} />
-        <Metric label="Pending candidates" value={stats.pendingCandidates} />
         <Metric label="Tracked videos" value={stats.contentItems} />
-        <Metric label="Audits" value={stats.audits} />
+        <Metric label="Scored videos" value={stats.scoredVideos} />
+        <Metric label="Audited videos" value={stats.audits} />
+        <Metric label="Comments collected" value={stats.comments} />
+        <Metric label="Deep audits" value={stats.deepAudits} />
+        <Metric label="Needs manual notes" value={stats.lowConfidenceAudits} />
+        <Metric label="Pending candidates" value={stats.pendingCandidates} />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -75,6 +79,23 @@ export default async function DashboardPage() {
             <ActionLink href="/videos" label="Calculate scores and audit videos" />
             <ActionLink href="/report" label="Generate weekly report" />
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-border bg-panel p-4">
+        <h3 className="font-semibold">Current content opportunities</h3>
+        <div className="mt-4 grid gap-3">
+          {stats.latestBriefs.map((brief) => (
+            <div className="rounded-md border border-border bg-background p-3" key={brief.id}>
+              <div className="font-medium">{brief.titleIdea}</div>
+              <p className="mt-1 text-sm text-muted">{brief.evidenceBasis}</p>
+            </div>
+          ))}
+          {stats.latestBriefs.length === 0 ? (
+            <div className="text-sm text-muted">
+              No content briefs yet. Generate a trend report from audited evidence, then create briefs.
+            </div>
+          ) : null}
         </div>
       </section>
     </div>

@@ -2,12 +2,27 @@ import { getPrisma } from "@/lib/prisma";
 
 export async function getDashboardStats() {
   const prisma = getPrisma();
-  const [approvedCreators, pendingCandidates, contentItems, audits, scores] =
+  const [
+    approvedCreators,
+    pendingCandidates,
+    contentItems,
+    scoredVideos,
+    audits,
+    comments,
+    deepAudits,
+    lowConfidenceAudits,
+    scores,
+    latestBriefs
+  ] =
     await Promise.all([
       prisma.creator.count({ where: { status: "approved" } }),
       prisma.discoveryCandidate.count({ where: { status: "pending" } }),
       prisma.contentItem.count(),
+      prisma.performanceScore.count({ where: { overperformanceScore: { not: null } } }),
       prisma.contentAudit.count(),
+      prisma.videoComment.count(),
+      prisma.contentAudit.count({ where: { analysisDepth: "deep" } }),
+      prisma.contentAudit.count({ where: { confidenceScore: { lt: 0.55 } } }),
       prisma.performanceScore.findMany({
         where: {
           overperformanceScore: { not: null },
@@ -23,6 +38,10 @@ export async function getDashboardStats() {
             }
           }
         }
+      }),
+      prisma.contentBrief.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 5
       })
     ]);
 
@@ -30,7 +49,12 @@ export async function getDashboardStats() {
     approvedCreators,
     pendingCandidates,
     contentItems,
+    scoredVideos,
     audits,
+    comments,
+    deepAudits,
+    lowConfidenceAudits,
+    latestBriefs,
     topVideos: scores.map((score) => ({
       id: score.contentItem.id,
       title: score.contentItem.title,

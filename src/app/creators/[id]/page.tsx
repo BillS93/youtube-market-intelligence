@@ -1,16 +1,20 @@
 import { notFound } from "next/navigation";
 
 import { refreshCreator } from "@/app/actions";
-import { Badge, Button, PageHeader, Panel } from "@/components/ui";
+import { Badge, Button, EmptyState, Notice, PageHeader, Panel } from "@/components/ui";
+import { readFeedback } from "@/lib/feedback";
 import { formatBigInt, formatDate, formatNumber } from "@/lib/format";
 import { getPrisma } from "@/lib/prisma";
 import { parseJsonArray } from "@/lib/json";
 
 export default async function CreatorDetailPage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  const feedback = readFeedback(await searchParams);
   const { id } = await params;
   const creator = await getPrisma().creator.findUnique({
     where: { id },
@@ -47,6 +51,7 @@ export default async function CreatorDetailPage({
           </form>
         }
       />
+      <Notice feedback={feedback} />
 
       <section className="grid gap-4 md:grid-cols-4">
         <Panel>
@@ -69,43 +74,51 @@ export default async function CreatorDetailPage({
 
       <Panel>
         <h3 className="font-semibold">Recent tracked videos</h3>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-xs uppercase text-muted">
-              <tr>
-                <th className="py-2 pr-3">Title</th>
-                <th className="py-2 pr-3">Format</th>
-                <th className="py-2 pr-3">Views</th>
-                <th className="py-2 pr-3">Over</th>
-                <th className="py-2 pr-3">Flags</th>
-                <th className="py-2 pr-3">Audit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {creator.contentItems.map((item) => {
-                const snapshot = item.snapshots[0];
-                const score = item.scores[0];
-                const audit = item.audits[0];
-                return (
-                  <tr className="border-t border-border" key={item.id}>
-                    <td className="max-w-md py-3 pr-3">{item.title}</td>
-                    <td className="py-3 pr-3">{item.formatType}</td>
-                    <td className="py-3 pr-3">{formatBigInt(snapshot?.viewCount)}</td>
-                    <td className="py-3 pr-3">{formatNumber(score?.overperformanceScore)}x</td>
-                    <td className="py-3 pr-3">
-                      <div className="flex flex-wrap gap-1">
-                        {parseJsonArray(score?.flags).map((flag) => (
-                          <Badge key={flag}>{flag}</Badge>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="py-3 pr-3">{audit ? `${Math.round(audit.confidenceScore * 100)}%` : "none"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        {creator.contentItems.length === 0 ? (
+          <div className="mt-4">
+            <EmptyState>
+              No videos stored for this creator yet. Use Refresh creator to fetch the uploads playlist and recent video metadata.
+            </EmptyState>
+          </div>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs uppercase text-muted">
+                <tr>
+                  <th className="py-2 pr-3">Title</th>
+                  <th className="py-2 pr-3">Format</th>
+                  <th className="py-2 pr-3">Views</th>
+                  <th className="py-2 pr-3">Over</th>
+                  <th className="py-2 pr-3">Flags</th>
+                  <th className="py-2 pr-3">Audit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {creator.contentItems.map((item) => {
+                  const snapshot = item.snapshots[0];
+                  const score = item.scores[0];
+                  const audit = item.audits[0];
+                  return (
+                    <tr className="border-t border-border" key={item.id}>
+                      <td className="max-w-md py-3 pr-3">{item.title}</td>
+                      <td className="py-3 pr-3">{item.formatType}</td>
+                      <td className="py-3 pr-3">{formatBigInt(snapshot?.viewCount)}</td>
+                      <td className="py-3 pr-3">{formatNumber(score?.overperformanceScore)}x</td>
+                      <td className="py-3 pr-3">
+                        <div className="flex flex-wrap gap-1">
+                          {parseJsonArray(score?.flags).map((flag) => (
+                            <Badge key={flag}>{flag}</Badge>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-3">{audit ? `${Math.round(audit.confidenceScore * 100)}%` : "none"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Panel>
     </div>
   );

@@ -19,6 +19,7 @@ model Creator {
   accounts            CreatorAccount[]
   contentItems        ContentItem[]
   discoveryCandidates DiscoveryCandidate[]
+  patternReports      CreatorPatternReport[]
 
   @@index([status])
   @@index([layer])
@@ -87,12 +88,14 @@ model DiscoveryCandidate {
   status         String          @default("pending")
   confidenceScore Float?
   rawResponse    String?
+  dataExpiresAt  DateTime?
   discoveredAt   DateTime        @default(now())
   approvedAt     DateTime?
 
   @@unique([queryId, channelId])
   @@index([channelId])
   @@index([status])
+  @@index([dataExpiresAt])
 }
 
 model ContentItem {
@@ -119,6 +122,8 @@ model ContentItem {
   snapshots       ContentSnapshot[]
   scores          PerformanceScore[]
   audits          ContentAudit[]
+  comments        VideoComment[]
+  manualNotes     ManualEvidenceNote[]
 
   @@index([creatorId])
   @@index([formatType])
@@ -159,6 +164,7 @@ model PerformanceScore {
   percentileWithinLayer       Float?
   formatType                  String      @default("unknown")
   flags                       String      @default("[]")
+  audits                      ContentAudit[]
 
   @@unique([contentItemId])
   @@index([formatType])
@@ -169,11 +175,22 @@ model ContentAudit {
   id                           String      @id @default(cuid())
   contentItemId                String
   contentItem                  ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  scoreId                      String?
+  score                        PerformanceScore? @relation(fields: [scoreId], references: [id], onDelete: SetNull)
   model                        String
+  auditVersion                 String      @default("deep_video_audit_v2")
+  analysisDepth                String      @default("quick")
+  evidenceQuality              String      @default("metadata_only")
+  evidenceLimitations          String      @default("[]")
+  evidencePack                 String?
   evidenceSnapshotIds          String      @default("[]")
   evidenceContentItemIds       String      @default("[]")
+  evidenceScoreIds             String      @default("[]")
+  evidenceCommentIds           String      @default("[]")
+  manualNoteIds                String      @default("[]")
   topic                        String
   sportLayer                   String
+  primaryAudience              String      @default("unclear")
   contentArchetype             String
   formatType                   String
   hookType                     String
@@ -188,12 +205,111 @@ model ContentAudit {
   whyItMightUnderperform       String
   risksOrCaveats               String
   suggestedAdaptationForUser   String
+  fullAuditJson                String?
   confidenceScore              Float
   rawResponse                  String?
   createdAt                    DateTime    @default(now())
 
   @@index([contentItemId])
   @@index([confidenceScore])
+  @@index([analysisDepth])
+  @@index([evidenceQuality])
+}
+
+model VideoComment {
+  id                String      @id @default(cuid())
+  contentItemId     String
+  contentItem       ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  youtubeCommentId  String      @unique
+  authorDisplayName String?
+  text              String
+  likeCount         Int?
+  publishedAt       DateTime?
+  capturedAt        DateTime    @default(now())
+  rawResponse       String?
+  dataExpiresAt     DateTime?
+
+  @@index([contentItemId])
+  @@index([capturedAt])
+  @@index([dataExpiresAt])
+}
+
+model ManualEvidenceNote {
+  id                             String      @id @default(cuid())
+  contentItemId                  String
+  contentItem                    ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  watchedByUser                  Boolean     @default(false)
+  openingHookNotes               String?
+  videoStructureNotes            String?
+  coachingDeliveryNotes          String?
+  exerciseOrTrainingContentNotes String?
+  scienceOrClaimsNotes           String?
+  ctaOrOfferNotes                String?
+  transcriptOrExcerpt            String?
+  userNotes                      String?
+  createdAt                      DateTime    @default(now())
+  updatedAt                      DateTime    @updatedAt
+
+  @@index([contentItemId])
+}
+
+model CreatorPatternReport {
+  id                  String   @id @default(cuid())
+  creatorId           String
+  creator             Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  creatorName         String
+  analysisScope       String
+  formatType          String
+  videosAnalyzedCount Int
+  topVideoIds         String   @default("[]")
+  bottomVideoIds      String   @default("[]")
+  evidenceAuditIds    String   @default("[]")
+  evidenceScoreIds    String   @default("[]")
+  evidenceLimitations String   @default("[]")
+  structuredJson      String
+  confidenceScore     Float
+  createdAt           DateTime @default(now())
+
+  @@index([creatorId])
+  @@index([formatType])
+}
+
+model TrendReport {
+  id                  String   @id @default(cuid())
+  reportVersion       String   @default("cross_creator_trend_report_v2")
+  dateRange           String
+  videosAnalyzedCount Int
+  creatorsAnalyzedCount Int
+  evidenceLimitations String   @default("[]")
+  strongestPatterns   String   @default("[]")
+  weakOrRiskyPatterns String   @default("[]")
+  contentOpportunities String  @default("[]")
+  nextResearchActions String   @default("[]")
+  structuredJson      String
+  confidenceScore     Float
+  createdAt           DateTime @default(now())
+  briefs              ContentBrief[]
+}
+
+model ContentBrief {
+  id                  String       @id @default(cuid())
+  trendReportId       String?
+  trendReport         TrendReport? @relation(fields: [trendReportId], references: [id], onDelete: SetNull)
+  titleIdea           String
+  targetAudience      String
+  businessObjective   String
+  platform            String
+  evidenceBasis       String
+  openingHook         String
+  videoStructure      String
+  keyCoachingPoints   String
+  suggestedDemoVisuals String
+  cta                 String
+  patternAdapted      String
+  whatNotToCopy       String
+  confidenceScore     Float
+  evidenceVideoIds    String       @default("[]")
+  createdAt           DateTime     @default(now())
 }
 
 model WeeklyReport {
@@ -202,9 +318,14 @@ model WeeklyReport {
   weekEnd                DateTime
   title                  String
   summary                String
+  reportVersion          String   @default("weekly_report_v1")
+  analysisDepth          String   @default("standard")
+  evidenceQuality        String   @default("mixed")
+  evidenceLimitations    String   @default("[]")
   evidenceContentItemIds String   @default("[]")
   evidenceAuditIds       String   @default("[]")
   confidenceScore        Float
+  structuredJson         String?
   rawInput               String?
   createdAt              DateTime @default(now())
 

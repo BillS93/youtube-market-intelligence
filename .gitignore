@@ -9,5 +9,6 @@ prisma/dev.db
 prisma/dev.db-journal
 coverage
 next-dev.*.log
+next-dev-*.log
 *.db
 tsconfig.tsbuildinfo

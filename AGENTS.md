@@ -422,3 +422,31 @@ A feature is not done unless:
 
 \- The UI is simple enough for a non-developer to use.
 
+
+## Analysis quality rules
+
+This app is not a title/description summarizer. It is a YouTube market research and content strategy tool.
+
+All AI analysis must:
+- Build from a stored evidence pack.
+- Separate observable evidence from interpretation.
+- Include confidence and limitations.
+- Avoid claiming causation.
+- Avoid claiming algorithm changes.
+- Avoid unsupported claims about video structure.
+- Avoid unsupported claims about creator credentials.
+- Distinguish platform performance from business relevance.
+- Distinguish viral entertainment from commercially useful coaching content.
+- Prefer practical, ethical adaptation over copying.
+
+Evidence levels:
+- metadata_only: title, description, metrics, duration, channel context only.
+- metadata_plus_comments: includes public viewer response.
+- metadata_plus_thumbnail: includes thumbnail/image analysis.
+- transcript_or_manual_notes: includes actual watched-video notes or transcript.
+- mixed: varied evidence across videos.
+
+Strong claims about hook sequence, pacing, coaching delivery, demonstration quality, CTA, and in-video structure require transcript/manual notes or equivalent direct video evidence.
+
+Metadata-only audits must be labelled as limited.
+

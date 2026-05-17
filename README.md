@@ -12,6 +12,8 @@ The MVP uses Next.js App Router, TypeScript, Prisma, SQLite, the server-side You
 - Calculates normalized performance using median creator baselines.
 - Keeps short candidates separate from long-form benchmarks.
 - Audits selected videos with OpenAI structured output.
+- Fetches public YouTube comments for selected/top/bottom/overperforming videos when quota allows.
+- Stores manual evidence notes or transcript excerpts for deeper video breakdowns.
 - Requires stored evidence IDs before any AI audit can be saved.
 - Generates a weekly report from stored scores and audits.
 - Logs YouTube API calls and estimated quota cost.
@@ -76,8 +78,10 @@ npm run build
 2. Review candidates and approve relevant creators.
 3. Go to Watchlist and refresh approved creators.
 4. Go to Videos and calculate scores.
-5. Select videos with stored snapshots and run audits.
-6. Generate the weekly report.
+5. Run quick audits broadly from stored metadata and performance.
+6. Fetch comments for top/bottom or overperforming videos, then run standard audits.
+7. Add manual notes or transcript excerpts on strategic video detail pages before deep audits.
+8. Generate creator patterns, trend reports, content briefs, or the weekly report after audits exist.
 
 ## Guardrails
 
@@ -89,10 +93,11 @@ npm run build
 - AI audits cannot be saved without evidence IDs.
 - Audit prompts instruct the model to analyze only supplied evidence.
 - Reports cite stored content and audit IDs.
+- Deep audits require manual notes, transcript excerpts, or equivalent richer evidence.
 
 ## Current limitations
 
 - Discovery is intentionally small and manual for quota control.
-- Weekly reports are deterministic summaries from stored evidence, not a broad market forecast.
-- Comment collection is available in the connector but not wired into the UI by default.
+- Weekly reports and trend reports use stored scored/audited evidence only, not a broad market forecast.
+- Thumbnail URLs are stored, but visual thumbnail analysis is not performed yet.
 - The app is local-first and does not include cron, deployment automation, Docker, Instagram, or background workers.

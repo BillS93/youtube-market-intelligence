@@ -117,6 +117,7 @@ export function calculatePerformanceScores(
         candidate.item.layer === score.item.layer &&
         candidate.formatType === score.formatType &&
         candidate.viewsPerDay !== null &&
+        !candidate.flags.has("too_new") &&
         !candidate.flags.has("missing_stats")
     );
 
@@ -130,7 +131,9 @@ export function calculatePerformanceScores(
       score.flags.add("insufficient_baseline");
     }
 
+    const benchmarkEligible = !score.flags.has("too_new") && !score.flags.has("missing_stats");
     const overperformanceScore =
+      benchmarkEligible &&
       score.viewsPerDay !== null &&
       creatorMedianViewsPerDay !== null &&
       creatorMedianViewsPerDay > 0
@@ -149,14 +152,18 @@ export function calculatePerformanceScores(
       commentsPer1000Views: roundNullable(score.commentsPer1000Views),
       creatorMedianViewsPerDay: roundNullable(creatorMedianViewsPerDay),
       overperformanceScore: roundNullable(overperformanceScore),
-      percentileWithinCreator: percentile(
-        score.viewsPerDay,
-        creatorPopulation.map((candidate) => candidate.viewsPerDay).filter(isNumber)
-      ),
-      percentileWithinLayer: percentile(
-        score.viewsPerDay,
-        layerPopulation.map((candidate) => candidate.viewsPerDay).filter(isNumber)
-      ),
+      percentileWithinCreator: benchmarkEligible
+        ? percentile(
+            score.viewsPerDay,
+            creatorPopulation.map((candidate) => candidate.viewsPerDay).filter(isNumber)
+          )
+        : null,
+      percentileWithinLayer: benchmarkEligible
+        ? percentile(
+            score.viewsPerDay,
+            layerPopulation.map((candidate) => candidate.viewsPerDay).filter(isNumber)
+          )
+        : null,
       formatType: score.formatType,
       flags: [...score.flags].sort()
     };

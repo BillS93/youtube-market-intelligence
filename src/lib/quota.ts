@@ -47,3 +47,7 @@ export function estimateRefreshQuotaCost(maxPages: number, videoCount = 50) {
   const videoBatches = Math.max(1, Math.ceil(videoCount / 50));
   return 1 + playlistCost + videoBatches;
 }
+
+export function estimateCommentQuotaCost(videoCount: number) {
+  return Math.max(0, videoCount);
+}
